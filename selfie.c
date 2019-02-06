@@ -384,12 +384,14 @@ uint64_t SYM_LT           = 24; // <
 uint64_t SYM_LEQ          = 25; // <=
 uint64_t SYM_GT           = 26; // >
 uint64_t SYM_GEQ          = 27; // >=
+uint64_t SYM_SLL          = 29; // <<
+uint64_t SYM_SRL          = 28; // >>
 
 // symbols for bootstrapping
 
-uint64_t SYM_INT      = 28; // int
-uint64_t SYM_CHAR     = 29; // char
-uint64_t SYM_UNSIGNED = 30; // unsigned
+uint64_t SYM_INT      = 30; // int
+uint64_t SYM_CHAR     = 31; // char
+uint64_t SYM_UNSIGNED = 32; // unsigned
 
 uint64_t* SYMBOLS; // strings representing symbols
 
@@ -455,6 +457,10 @@ void init_scanner () {
   *(SYMBOLS + SYM_LEQ)          = (uint64_t) "<=";
   *(SYMBOLS + SYM_GT)           = (uint64_t) ">";
   *(SYMBOLS + SYM_GEQ)          = (uint64_t) ">=";
+
+  *(SYMBOLS + SYM_SLL)          = (uint64_t) "<<";
+  *(SYMBOLS + SYM_SRL)          = (uint64_t) ">>";
+
 
   *(SYMBOLS + SYM_INT)      = (uint64_t) "int";
   *(SYMBOLS + SYM_CHAR)     = (uint64_t) "char";
@@ -589,6 +595,7 @@ uint64_t is_literal();
 uint64_t is_star_or_div_or_modulo();
 uint64_t is_plus_or_minus();
 uint64_t is_comparison();
+uint64_t is_sll_or_srl();
 
 uint64_t look_for_factor();
 uint64_t look_for_statement();
@@ -617,6 +624,7 @@ uint64_t compile_factor();
 uint64_t compile_term();
 uint64_t compile_simple_expression();
 uint64_t compile_expression();
+uint64_t compile_bitwise_expression();
 void     compile_while();
 void     compile_if();
 void     compile_return();
@@ -826,6 +834,10 @@ uint64_t F3_SD    = 3; // 011
 uint64_t F3_BEQ   = 0; // 000
 uint64_t F3_JALR  = 0; // 000
 uint64_t F3_ECALL = 0; // 000
+uint64_t F3_SLL   = 1;
+uint64_t F3_SRL   = 5;
+
+
 
 // f7-codes
 uint64_t F7_ADD  = 0;  // 0000000
@@ -834,7 +846,8 @@ uint64_t F7_SUB  = 32; // 0100000
 uint64_t F7_DIVU = 1;  // 0000001
 uint64_t F7_REMU = 1;  // 0000001
 uint64_t F7_SLTU = 0;  // 0000000
-
+uint64_t F7_SLL = 0;
+uint64_t F7_SRL = 0;
 // f12-codes (immediates)
 uint64_t F12_ECALL = 0; // 000000000000
 
@@ -878,6 +891,10 @@ void emit_mul(uint64_t rd, uint64_t rs1, uint64_t rs2);
 void emit_divu(uint64_t rd, uint64_t rs1, uint64_t rs2);
 void emit_remu(uint64_t rd, uint64_t rs1, uint64_t rs2);
 void emit_sltu(uint64_t rd, uint64_t rs1, uint64_t rs2);
+void emit_sll(uint64_t rd, uint64_t rs1, uint64_t rs2);
+void emit_srl(uint64_t rd, uint64_t rs1, uint64_t rs2);
+
+
 
 void emit_ld(uint64_t rd, uint64_t rs1, uint64_t immediate);
 void emit_sd(uint64_t rs1, uint64_t immediate, uint64_t rs2);
@@ -1107,6 +1124,9 @@ void do_divu();
 void do_remu();
 
 void do_sltu();
+
+void do_sll();
+void do_srl();
 void zero_extend_sltu();
 
 void     print_ld();
@@ -2884,18 +2904,26 @@ void get_symbol() {
 
       } else if (character == CHAR_LT) {
         get_character();
-
-        if (character == CHAR_EQUAL) {
+        if (character == CHAR_LT){
           get_character();
 
-          symbol = SYM_LEQ;
-        } else
-          symbol = SYM_LT;
+          symbol = SYM_SLL;
+        }
+        else if (character == CHAR_EQUAL) {
+                get_character();
+
+                symbol = SYM_LEQ;
+              } else
+                symbol = SYM_LT;
 
       } else if (character == CHAR_GT) {
         get_character();
+        if (character == CHAR_GT) {
+          get_character();
 
-        if (character == CHAR_EQUAL) {
+          symbol = SYM_SRL;
+        } else
+          if (character == CHAR_EQUAL) {
           get_character();
 
           symbol = SYM_GEQ;
@@ -3133,6 +3161,17 @@ uint64_t is_star_or_div_or_modulo() {
   else
     return 0;
 }
+
+
+uint64_t is_sll_or_srl() {
+  if (symbol == SYM_SLL)
+    return 1;
+  else if (symbol == SYM_SRL)
+    return 1;
+  else
+    return 0;
+}
+
 
 uint64_t is_plus_or_minus() {
   if (symbol == SYM_MINUS)
@@ -3821,6 +3860,82 @@ uint64_t compile_term() {
   return ltype;
 }
 
+//MY CODE 1
+
+uint64_t compile_bitwise_expression() {
+  uint64_t ltype;
+  uint64_t operator_symbol;
+  uint64_t rtype;
+
+  // assert: n = allocated_temporaries
+
+  ltype = compile_simple_expression();
+
+  // assert: allocated_temporaries == n + 1
+
+  // >> or << ?
+  while (is_sll_or_srl()) {
+    operator_symbol = symbol;
+
+    get_symbol();
+
+    rtype = compile_simple_expression();
+
+    // assert: allocated_temporaries == n + 2
+
+    if (operator_symbol == SYM_SLL) {
+      if (ltype == UINT64STAR_T) {
+        if (rtype == UINT64_T)
+          // UINT64STAR_T + UINT64_T
+          // pointer arithmetic: factor of 2^3 of integer operand
+          syntax_error_message("(uint64_t*) << (uint64_t) is undefined");
+
+        else
+          // UINT64STAR_T + UINT64STAR_T
+          syntax_error_message("(uint64_t*) << (uint64_t*) is undefined");
+      } else if (rtype == UINT64STAR_T) {
+        // UINT64_T + UINT64STAR_T
+        // pointer arithmetic: factor of 2^3 of integer operand
+        syntax_error_message("(uint64_t) << (uint64_t*) is undefined");
+
+        ltype = UINT64STAR_T;
+      }
+
+      emit_sll(previous_temporary(), previous_temporary(), current_temporary());
+
+    } else if (operator_symbol == SYM_SRL) {
+      if (ltype == UINT64STAR_T) {
+        if (rtype == UINT64_T) {
+          syntax_error_message("(uint64_t*) >> (uint64_t) is undefined");
+        } else {
+          syntax_error_message("(uint64_t*) >> (uint64_t*) is undefined");
+
+          ltype = UINT64_T;
+        }
+      } else if (rtype == UINT64STAR_T)
+        // UINT64_T - UINT64STAR_T
+        syntax_error_message("(uint64_t) >> (uint64_t*) is undefined");
+      else
+        // UINT64_T - UINT64_T
+        emit_srl(previous_temporary(), previous_temporary(), current_temporary());
+    }
+
+    tfree(1);
+  }
+
+  // assert: allocated_temporaries == n + 1
+
+  return ltype;
+}
+
+
+
+
+
+
+
+
+
 uint64_t compile_simple_expression() {
   uint64_t ltype;
   uint64_t operator_symbol;
@@ -3900,7 +4015,7 @@ uint64_t compile_expression() {
 
   // assert: n = allocated_temporaries
 
-  ltype = compile_simple_expression();
+  ltype = compile_bitwise_expression();
 
   // assert: allocated_temporaries == n + 1
 
@@ -3910,7 +4025,7 @@ uint64_t compile_expression() {
 
     get_symbol();
 
-    rtype = compile_simple_expression();
+    rtype = compile_bitwise_expression();
 
     // assert: allocated_temporaries == n + 2
 
@@ -5416,6 +5531,19 @@ void emit_add(uint64_t rd, uint64_t rs1, uint64_t rs2) {
   ic_add = ic_add + 1;
 }
 
+void emit_sll(uint64_t rd, uint64_t rs1, uint64_t rs2) {
+  emit_instruction(encode_r_format(F7_SLL, rs2, rs1, F3_SLL, rd, OP_OP));
+
+  ic_add = ic_add + 1;
+}
+
+void emit_srl(uint64_t rd, uint64_t rs1, uint64_t rs2) {
+  emit_instruction(encode_r_format(F7_SRL, rs2, rs1, F3_SRL, rd, OP_OP));
+
+  ic_add = ic_add + 1;
+}
+
+
 void emit_sub(uint64_t rd, uint64_t rs1, uint64_t rs2) {
   emit_instruction(encode_r_format(F7_SUB, rs2, rs1, F3_SUB, rd, OP_OP));
 
@@ -6738,6 +6866,26 @@ void do_add() {
   ic_add = ic_add + 1;
 }
 
+void do_sll() {
+  if (rd != REG_ZR)
+    // semantics of add
+    *(registers + rd) = *(registers + rs1) << *(registers + rs2);
+
+  pc = pc + INSTRUCTIONSIZE;
+
+  //ic_add = ic_add + 1;
+}
+void do_srl() {
+  if (rd != REG_ZR)
+    // semantics of add
+    *(registers + rd) = *(registers + rs1) >> *(registers + rs2);
+
+  pc = pc + INSTRUCTIONSIZE;
+
+  //ic_add = ic_add + 1;
+}
+
+
 void constrain_add_sub_mul_divu_remu_sltu(char* operator) {
   char* op1;
   char* op2;
@@ -7806,6 +7954,12 @@ void decode_execute() {
 
         return;
       }
+      else if (funct7 == F7_SRL) {
+
+          do_srl();
+
+        return;
+      }
     } else if (funct3 == F3_REMU) {
       if (funct7 == F7_REMU) {
         if (debug) {
@@ -7854,6 +8008,15 @@ void decode_execute() {
           }
         } else
           do_sltu();
+
+        return;
+      }
+    }
+
+    else if (funct3 == F3_SLL) {
+      if (funct7 == F7_SLL) {
+
+          do_sll();
 
         return;
       }
