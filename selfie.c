@@ -1398,6 +1398,10 @@ void reset_interpreter() {
 // ---------------------------- CONTEXTS ---------------------------
 // -----------------------------------------------------------------
 
+
+void init_processes(uint64_t nb_contexts); // initialize nubmer of contexts
+
+
 uint64_t* new_context();
 
 void init_context(uint64_t* context, uint64_t* parent, uint64_t* vctxt);
@@ -1532,6 +1536,19 @@ uint64_t* current_context = (uint64_t*) 0; // context currently running
 uint64_t* used_contexts = (uint64_t*) 0; // doubly-linked list of used contexts
 uint64_t* free_contexts = (uint64_t*) 0; // singly-linked list of free contexts
 
+uint64_t temp_counter      =  0; //Temprorary Context counter
+uint64_t number_of_process = 1; // number of processe to run
+uint64_t remaining_process = 1; // number of processe to run
+
+
+void init_processes(uint64_t nb) {
+  remaining_process = nb;
+  number_of_process = nb;
+}
+
+
+
+
 // ------------------------- INITIALIZATION ------------------------
 
 void reset_microkernel() {
@@ -1568,6 +1585,9 @@ uint64_t handle_exception(uint64_t* context);
 
 uint64_t mipster(uint64_t* to_context);
 uint64_t hypster(uint64_t* to_context);
+uint64_t xipster(uint64_t* to_context);
+uint64_t zypster(uint64_t* to_context);
+
 
 uint64_t mixter(uint64_t* to_context, uint64_t mix);
 
@@ -1617,6 +1637,9 @@ uint64_t MINSTER = 5;
 uint64_t MOBSTER = 6;
 
 uint64_t HYPSTER = 7;
+
+uint64_t ZYPSTER = 8;
+uint64_t XIPSTER = 9;
 
 // ------------------------ GLOBAL VARIABLES -----------------------
 
@@ -8969,6 +8992,82 @@ uint64_t mipster(uint64_t* to_context) {
   }
 }
 
+
+uint64_t xipster(uint64_t* to_context) {
+  uint64_t* head_context;
+  uint64_t timeout;
+  uint64_t* from_context;
+
+  head_context = to_context;
+
+
+
+  print("mipster\n");
+
+  timeout = TIMESLICE;
+
+  while (1) {
+    //print("\nSwitch\n");
+
+    from_context = mipster_switch(to_context, timeout);
+
+    if (get_parent(from_context) != MY_CONTEXT) {
+      // switch to parent which is in charge of handling exceptions
+      to_context = get_parent(from_context);
+
+      timeout = TIMEROFF;
+    } else if (handle_exception(from_context) == EXIT){
+            remaining_process = remaining_process - 1;
+            if(remaining_process == 0) return get_exit_code(current_context);
+            to_context = get_next_context(from_context);
+            if(to_context == (uint64_t*) 0) to_context = head_context;
+            delete_context(from_context,used_contexts);
+            timeout = TIMESLICE;
+          }
+    else {
+      // TODO: scheduler should go here
+        to_context = get_next_context(from_context);
+        if(to_context == (uint64_t*) 0) to_context = head_context;
+        timeout = TIMESLICE;
+    }
+  }
+}
+
+
+
+
+
+uint64_t zypster(uint64_t* to_context) {
+  uint64_t* head_context;
+  uint64_t* from_context;
+
+  print("hypster\n");
+
+  head_context = to_context;
+  while (1) {
+    from_context = hypster_switch(to_context, TIMESLICE);
+
+    if (handle_exception(from_context) == EXIT){
+
+      remaining_process = remaining_process - 1;
+      if(remaining_process == 0) return get_exit_code(current_context);
+      to_context = get_next_context(from_context);
+      if(to_context == (uint64_t*) 0) to_context = head_context;
+      delete_context(from_context,used_contexts);
+
+    }
+
+    else{
+      // TODO: scheduler should go here
+      to_context = get_next_context(from_context);
+      if(to_context == (uint64_t*) 0) to_context = head_context;
+
+    }
+
+  }
+}
+
+
 uint64_t hypster(uint64_t* to_context) {
   uint64_t* from_context;
 
@@ -9260,26 +9359,40 @@ uint64_t selfie_run(uint64_t machine) {
   }
 
   if (machine != MONSTER)
-    init_memory(atoi(peek_argument()));
+    if(machine == XIPSTER){
+      //TODO get number of process
+      init_processes(atoi(peek_argument()));
+      init_memory(number_of_process * 1);
+    }
+    else if(machine == ZYPSTER){
+      init_processes(atoi(peek_argument()));
+      init_memory(number_of_process * 1);
+    }
+    else  init_memory(atoi(peek_argument()));
   else {
     init_memory(1);
 
     max_execution_depth = atoi(peek_argument());
   }
 
+
   execute = 1;
 
   reset_interpreter();
   reset_microkernel();
 
-  current_context = create_context(MY_CONTEXT, 0);
+  while( temp_counter < number_of_process ){
+    current_context = create_context(MY_CONTEXT, 0);
 
-  up_load_binary(current_context);
+    up_load_binary(current_context);
 
-  // pass binary name as first argument by replacing memory size
-  set_argument(binary_name);
+    // pass binary name as first argument by replacing memory size
+    set_argument(binary_name);
 
-  up_load_arguments(current_context, number_of_remaining_arguments(), remaining_arguments());
+    up_load_arguments(current_context, number_of_remaining_arguments(), remaining_arguments());
+
+    temp_counter = temp_counter + 1 ;
+  }
 
   printf3("%s: selfie executing %s with %dMB physical memory on ", selfie_name,
     binary_name,
@@ -9287,6 +9400,8 @@ uint64_t selfie_run(uint64_t machine) {
 
   if (machine == MIPSTER)
     exit_code = mipster(current_context);
+  else if (machine == XIPSTER)
+    exit_code = xipster(current_context);
   else if (machine == DIPSTER)
     exit_code = mipster(current_context);
   else if (machine == RIPSTER)
@@ -9303,6 +9418,12 @@ uint64_t selfie_run(uint64_t machine) {
       exit_code = mipster(current_context);
     else
       exit_code = hypster(current_context);
+  else if (machine == ZYPSTER)
+    if (is_boot_level_zero())
+    // no hypster on boot level zero
+      exit_code = mipster(current_context);
+    else
+      exit_code = zypster(current_context);
   else
     // change 0 to anywhere between 0% to 100% mipster
     exit_code = mixter(current_context, 0);
@@ -9722,6 +9843,8 @@ uint64_t selfie() {
         selfie_sat();
       else if (string_compare(option, "-m"))
         return selfie_run(MIPSTER);
+      else if (string_compare(option, "-x"))
+        return selfie_run(XIPSTER);
       else if (string_compare(option, "-d"))
         return selfie_run(DIPSTER);
       else if (string_compare(option, "-r"))
@@ -9730,6 +9853,9 @@ uint64_t selfie() {
         return selfie_run(MONSTER);
       else if (string_compare(option, "-y"))
         return selfie_run(HYPSTER);
+      else if (string_compare(option, "-z"))
+        return selfie_run(ZYPSTER);
+
       else if (string_compare(option, "-min"))
         return selfie_run(MINSTER);
       else if (string_compare(option, "-mob"))
